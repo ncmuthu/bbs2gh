@@ -1,0 +1,32 @@
+name: Send Email
+
+inputs:
+  to_email:
+    description: 'Recipient email address'
+    required: true
+  from_email:
+    description: 'Sender email address'
+    required: false
+  subject:
+    description: 'Subject'
+    required: true
+  mail_body:
+    description: 'Mail message text'
+    require: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set GitHub Path
+      run: echo "$GITHUB_ACTION_PATH" >> $GITHUB_PATH
+      shell: sh
+      env:
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+    - name: Send email
+      run: send_email.py
+      shell: sh
+      env:
+        TO_EMAIL: ${{ inputs.to_email }}
+        SUBJECT: ${{ inputs.subject }}
+        MAIL_BODY: ${{ inputs.mail_body }}
+        FROM_EMAIL: ${{ inputs.from_email }}
