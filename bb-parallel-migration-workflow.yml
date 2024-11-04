@@ -1,0 +1,71 @@
+name: BB to GH Parallel Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      json_data:
+        description: 'Specify the json data.'
+        type: string
+        required: true
+        default: 'None'
+
+jobs:
+  run-migration:
+    runs-on: pss-runners-wwgaab
+    #runs-on: pru-pss-all-nprd-linux-runner-01
+    name: BB to GH Migration
+    environment: production
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix: ${{ fromJson(inputs.json_data) }}
+    container:
+      image: docker-rt-cis.pruregistry.intranet.asia:8443/gh-mig/bbs2gh:${{ vars.BBS2GH_IMAGE_VERSION }}
+      credentials:
+        username: ${{ secrets.ARTIFACTORY_USER }}
+        password: ${{ secrets.ARTIFACTORY_TOKEN }}    
+      env:
+        BBS_USERNAME: ${{ vars.BBS_SVC_USERNAME }}
+        BBS_PASSWORD: ${{ secrets.BBS_SVC_PASSWORD }}
+        GH_PAT: ${{ secrets.GH_PAT_SRVPSSAPRBITBUCKET01 }}
+        GH_TOKEN: ${{ secrets.GH_PAT_SRVPSSAPRBITBUCKET01 }}
+        BB_SERVER: ${{ vars.BB_SERVER }}
+        BB_SSH_USERNAME: ${{ vars.BB_SSH_USERNAME }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.1.2
+      - name: Inputs
+        run: |
+          echo "BB_PROJECT_KEY: ${{ matrix.BB_PROJECT_KEY }}"
+          echo "BB_REPO_NAME: ${{ matrix.BB_REPO_NAME }}"
+          echo "PROJECT_CODE: ${{ matrix.PROJECT_CODE }}"
+          echo "GH_DEST_ORG: ${{ matrix.GH_DEST_ORG }}"
+          echo "PIPELINE_TYPE: ${{ matrix.PIPELINE_TYPE }}"
+          echo "USER_DEFINED_NAME: ${{ matrix.USER_DEFINED_NAME }}"
+      - name: Pre-steps for Migration - SSH key
+        run: |
+          mkdir ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY_BASE64 }}" | base64 -d > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+      - name: Run_migration
+        run: |        
+          export AZURE_STORAGE_CONNECTION_STRING=`echo "${{ secrets.AZURE_STORAGE_CONNECTION_STRING_BASE64 }}" | base64 -d`
+          gh extension install github/gh-bbs2gh
+          gh extension upgrade gh-bbs2gh
+          udn="${{ matrix.USER_DEFINED_NAME }}"
+          if [ -z "$udn" ]; then
+            udn="None"
+          fi
+          ./migrate-bb-to-gh-workflow.py --bb-project-key ${{ matrix.BB_PROJECT_KEY }} --bb-repo-name ${{ matrix.BB_REPO_NAME }} --project-code ${{ matrix.PROJECT_CODE }} --gh-dest-org ${{ matrix.GH_DEST_ORG }} --gh-token ${{ secrets.GH_PAT }} --pipeline-type ${{ matrix.PIPELINE_TYPE }} --user-defined-name $udn 2>&1 | tee -a migration.log
+        continue-on-error: true
+      - name: Check_for_failure_logs
+        run: |
+          grep "\[ERROR\]" migration.log && exit 1 || exit 0
+      - name: Attach logs to Summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bbs2gh-logs-${{ matrix.BB_PROJECT_KEY }}-${{ matrix.BB_REPO_NAME }}
+          path: ${{ github.workspace}}/*log
+          retention-days: 5
